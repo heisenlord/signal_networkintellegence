@@ -1,0 +1,31 @@
+services:
+  - type: web
+    name: signal-api
+    runtime: python
+    branch: deploy/render-backend
+    plan: starter
+    buildCommand: pip install --upgrade pip==26.3 && pip install --require-hashes -r backend/requirements.lock
+    startCommand: bash scripts/start-render.sh
+    healthCheckPath: /api/health
+    numInstances: 1
+    disk:
+      name: signal-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: SIGNAL_ENVIRONMENT
+        value: production
+      - key: SIGNAL_DATABASE_URL
+        value: sqlite:////var/data/signal.db
+      - key: SIGNAL_ALLOWED_ORIGINS
+        sync: false
+      - key: SIGNAL_OIDC_ISSUER
+        sync: false
+      - key: SIGNAL_OIDC_AUDIENCE
+        sync: false
+      - key: SIGNAL_OIDC_JWKS_URL
+        sync: false
+      - key: SIGNAL_AGENT_MODE
+        value: deterministic
+      - key: GEMINI_MODEL
+        value: gemini-3.5-flash

@@ -10,9 +10,12 @@ from backend.config import get_settings
 get_settings()
 
 DATA = Path(__file__).parent / "data"
-DATA.mkdir(exist_ok=True)
 DATABASE_URL = os.getenv("SIGNAL_DATABASE_URL", f"sqlite:///{DATA / 'signal.db'}")
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+if "SIGNAL_DATABASE_URL" not in os.environ:
+    DATA.mkdir(exist_ok=True)
+if not DATABASE_URL.startswith("sqlite:///"):
+    raise ValueError("This deployment supports SQLite only; configure SIGNAL_DATABASE_URL with sqlite:///")
+engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False, "timeout": 30})
 
 
 @event.listens_for(engine, "connect")

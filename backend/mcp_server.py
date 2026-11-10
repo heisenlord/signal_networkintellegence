@@ -8,6 +8,7 @@ import os
 from mcp.server.fastmcp import FastMCP
 
 from backend.auth import IDENTITIES
+from backend.config import get_settings
 from backend.database import Session
 from backend.seed import seed
 from backend.services.actions import propose_action as service_propose
@@ -18,6 +19,8 @@ mcp = FastMCP("Signal Network Intelligence")
 
 
 def invoke(name, *args, **kwargs):
+    if get_settings().signal_environment == "production":
+        raise ValueError("Demo stdio MCP is disabled in production; use the authenticated REST API")
     identity = IDENTITIES.get(os.getenv("SIGNAL_DEMO_TOKEN", ""))
     if identity is None:
         raise ValueError("SIGNAL_DEMO_TOKEN must identify an explicit demo customer and role")
@@ -78,5 +81,7 @@ def propose_action(investigation_id: str) -> dict:
 
 
 if __name__ == "__main__":
+    if get_settings().signal_environment == "production":
+        raise SystemExit("Demo stdio MCP is disabled in production")
     seed()
     mcp.run(transport="stdio")
