@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Literal
 
 from dotenv import load_dotenv
-from pydantic import Field, SecretStr, model_validator
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -15,46 +15,6 @@ load_dotenv(ROOT / ".env", override=False)
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(extra="ignore")
-    signal_environment: Literal["development", "production"] = "development"
-    signal_allowed_hosts: list[str] = ["localhost", "127.0.0.1", "[::1]"]
-    signal_allowed_origins: list[str] = []
-    render_external_hostname: str = ""
-    signal_oidc_issuer: str = ""
-    signal_oidc_audience: str = ""
-    signal_oidc_jwks_url: str = ""
-    signal_static_dir: str = ""
-    signal_max_body_bytes: int = Field(default=16384, ge=1024, le=1048576)
-    signal_requests_per_minute: int = Field(default=300, ge=10, le=10000)
-    signal_max_concurrent_investigations: int = Field(default=2, ge=1, le=8)
-    signal_investigations_per_minute: int = Field(default=6, ge=1, le=60)
-
-    @model_validator(mode="after")
-    def secure_production(self):
-        from urllib.parse import urlsplit
-        import re
-        defaults = ["localhost", "127.0.0.1", "[::1]"]
-        if self.render_external_hostname and self.signal_allowed_hosts == defaults:
-            if not re.fullmatch(r"[a-zA-Z0-9.-]+", self.render_external_hostname):
-                raise ValueError("Invalid RENDER_EXTERNAL_HOSTNAME")
-            self.signal_allowed_hosts = [self.render_external_hostname, "localhost"]
-        for origin in self.signal_allowed_origins:
-            url = urlsplit(origin)
-            if (not url.hostname or "*" in origin or url.username or url.password or url.query or url.fragment
-                    or url.path or url.scheme not in {"http", "https"}
-                    or (self.signal_environment == "production" and url.scheme != "https")):
-                raise ValueError("SIGNAL_ALLOWED_ORIGINS must contain exact origins without paths; production requires HTTPS")
-        if self.signal_environment == "production":
-            for value in (self.signal_oidc_issuer, self.signal_oidc_jwks_url):
-                url = urlsplit(value)
-                if url.scheme != "https" or not url.hostname or url.username or url.password or url.fragment:
-                    raise ValueError("Production requires HTTPS OIDC issuer and JWKS URLs")
-            if not self.signal_oidc_audience.strip():
-                raise ValueError("Production requires SIGNAL_OIDC_AUDIENCE")
-            if not self.signal_allowed_hosts or any("*" in host for host in self.signal_allowed_hosts):
-                raise ValueError("Production requires explicit SIGNAL_ALLOWED_HOSTS without wildcards")
-            if self.signal_allowed_hosts == defaults:
-                raise ValueError("Set SIGNAL_ALLOWED_HOSTS explicitly for production")
-        return self
     gemini_api_key: SecretStr = SecretStr("")
     gemini_model: str = "gemini-3.5-flash"
     signal_agent_mode: Literal["auto", "llm", "deterministic"] = "auto"
