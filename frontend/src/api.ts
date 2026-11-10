@@ -1,0 +1,20 @@
+import axios from 'axios';
+
+const client = axios.create({
+  baseURL: import.meta.env.VITE_API_BASE_URL || '/api/v1',
+  timeout: Number(import.meta.env.VITE_API_TIMEOUT_MS) || 65000,
+});
+export async function api<T>(path: string, token: string, body?: unknown): Promise<T> {
+  const result = await client.request<T>({ url: path, method: body === undefined ? 'GET' : 'POST', data: body,
+    headers: { Authorization: `Bearer ${token}` } });
+  return result.data;
+}
+export function errorMessage(error: unknown): string {
+  if (axios.isAxiosError(error)) {
+    const detail = error.response?.data?.detail;
+    if (typeof detail === 'string') return detail;
+    if (error.code === 'ECONNABORTED') return 'The request timed out. Retry the bounded investigation.';
+    if (!error.response) return 'Cannot reach the API. Start the backend on port 8000 and retry.';
+  }
+  return 'The request could not be completed. Please retry.';
+}

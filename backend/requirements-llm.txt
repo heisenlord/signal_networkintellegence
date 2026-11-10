@@ -1,0 +1,3 @@
+# Gemini support is already included in the core requirements.
+# Compatibility install entry point for LLM-enabled deployments.
+-r requirements.txt
