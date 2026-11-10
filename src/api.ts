@@ -1,6 +1,9 @@
 import axios from 'axios';
 
-const apiBaseURL = (import.meta.env.VITE_API_BASE_URL || '/api/v1').replace(/\/+$/, '');
+const defaultApiBaseURL = import.meta.env.PROD
+  ? 'https://signal-networkintellegence.onrender.com/api/v1'
+  : '/api/v1';
+const apiBaseURL = (import.meta.env.VITE_API_BASE_URL || defaultApiBaseURL).replace(/\/+$/, '');
 export const authenticationConfigURL = apiBaseURL.replace(/\/v1$/, '/config');
 const client = axios.create({
   baseURL: apiBaseURL,
@@ -16,7 +19,7 @@ export function errorMessage(error: unknown): string {
     const detail = error.response?.data?.detail;
     if (typeof detail === 'string') return detail;
     if (error.code === 'ECONNABORTED') return 'The request timed out. Retry the bounded investigation.';
-    if (!error.response) return 'Cannot reach the API. Start the backend on port 8000 and retry.';
+    if (!error.response) return 'Cannot reach the API. Check the backend service and API URL, then retry.';
   }
   return 'The request could not be completed. Please retry.';
 }

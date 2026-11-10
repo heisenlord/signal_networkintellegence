@@ -4,10 +4,10 @@ Deploy branch `deploy/vercel-frontend` with repository root as the root director
 
 Use framework **Vite**, Node.js **22.x**, install command `npm ci`, build command `npm run build`, and output directory `dist`. Set the Vercel production branch to `deploy/vercel-frontend`.
 
-Set this public Production environment value before building:
+Production builds default to the deployed Render backend. If overriding the public Production environment value in Vercel, use:
 
 ```dotenv
-VITE_API_BASE_URL=https://YOUR-BACKEND.onrender.com/api/v1
+VITE_API_BASE_URL=https://signal-networkintellegence.onrender.com/api/v1
 ```
 
 On Render, set `SIGNAL_ALLOWED_ORIGINS` to the exact Vercel production origin, such as `["https://YOUR-FRONTEND.vercel.app"]`. Never put API keys or access tokens in Vercel build variables. Changing environment values requires redeployment.

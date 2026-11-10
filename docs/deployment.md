@@ -68,10 +68,10 @@ Add the OIDC and CORS environment values above as well. Do not change the enviro
 
 1. Import the same repository into Vercel. Set the production branch to `deploy/vercel-frontend` under the project's Git settings.
 2. Use repository root, framework preset **Vite**, Node.js **22.x**, install command `npm ci`, build command `npm run build`, and output directory `dist`.
-3. Set this public build-time environment variable for Production:
+3. Production builds default to the deployed Render backend. If setting a public build-time override for Production, use:
 
 ```dotenv
-VITE_API_BASE_URL=https://YOUR-BACKEND.onrender.com/api/v1
+VITE_API_BASE_URL=https://signal-networkintellegence.onrender.com/api/v1
 ```
 
 4. Deploy. Copy the stable Vercel production origin into Render's `SIGNAL_ALLOWED_ORIGINS` and redeploy/restart the backend after changing it.
