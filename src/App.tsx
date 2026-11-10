@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Activity, Antenna, ArrowDownRight, ArrowRight, ArrowUpRight, Bell, Blocks, BookOpen, Cable, Check, ChevronDown, ChevronRight, CircleHelp, Clock3, Download, ExternalLink, FileCheck2, Fingerprint, GitBranch, LayoutDashboard, LoaderCircle, Menu, Network, Search, ShieldCheck, Sparkles, SquareArrowOutUpRight, Terminal, TriangleAlert, X } from 'lucide-react';
 import { api, errorMessage } from './api';
+import type { AccessSession } from './AccessGate';
 import { Badge, Button, Empty } from './components/ui';
 import { TopologyGraph } from './components/TopologyGraph';
 import { KPIChart } from './components/KPIChart';
@@ -33,11 +34,11 @@ function AlarmTable({ alarms, onSelect, onInvestigate }: { alarms: Alarm[]; onSe
   return <div className="table-scroll"><table className="alarm-table"><thead><tr><th>Severity</th><th>Alarm / entity</th><th>Incident</th><th>Raised at</th><th><span className="sr-only">Action</span></th></tr></thead><tbody>{alarms.map(a => <tr key={a.id}><td><Badge tone={a.severity === 'critical' ? 'red' : 'amber'}><span className="badge-dot" />{a.severity}</Badge></td><td><button className="table-link" onClick={() => onSelect(a.entity_id)}>{a.title}</button><span className="cell-subtext mono">{a.entity_id} · {a.id}</span></td><td><button className="mono text-button" onClick={() => onInvestigate(a.incident_id)}>{a.incident_id}</button></td><td className="muted">{a.occurred_at.slice(11, 16)} UTC</td><td><button className="icon-button" aria-label={`Investigate ${a.id}`} onClick={() => onInvestigate(a.incident_id)}><ArrowUpRight size={16} /></button></td></tr>)}</tbody></table></div>;
 }
 
-export default function App() {
+export default function App({ session, onSignOut }: { session?: AccessSession; onSignOut?: () => void }) {
   const client = useQueryClient();
   const [page, setPage] = useState<Page>('overview');
-  const [customer, setCustomer] = useState('atlas');
-  const [role, setRole] = useState('alarm');
+  const [customer, setCustomer] = useState(session?.customer_id || 'atlas');
+  const [role, setRole] = useState(session?.role || 'alarm');
   const [incidentId, setIncidentId] = useState('INC-1005');
   const [selected, setSelected] = useState('CELL-101');
   const [kpiEntity, setKpiEntity] = useState('CELL-101');
@@ -51,7 +52,7 @@ export default function App() {
   const [notice, setNotice] = useState<{ message: string; error: boolean } | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [expandedAudit, setExpandedAudit] = useState<number | null>(null);
-  const token = `demo-${customer}-${role}`;
+  const token = session?.token || `demo-${customer}-${role}`;
   const asOf = historical ? '2026-11-10T09:45:00Z' : '2026-11-10T10:05:00Z';
   const kpiStart = new Date(Date.parse('2026-11-10T10:15:00Z') - kpiHours * 3600000).toISOString();
   const agentStatus = useQuery({ queryKey: ['agent-status', token], queryFn: () => api<AgentStatus>('/agent/status', token) });
@@ -80,7 +81,7 @@ export default function App() {
       client.invalidateQueries({ queryKey: ['audit', token] }); notify(`Investigation complete · ${data.classification}`);
     }, onError: error => notify(errorMessage(error), true) });
   const propose = useMutation({ mutationFn: (id: string) => api<Proposal>('/proposals', token, { investigation_id: id }),
-    onSuccess: () => { client.invalidateQueries({ queryKey: ['proposals', token] }); notify('Proposal saved. Switch to Human approver to review it.'); }, onError: error => notify(errorMessage(error), true) });
+    onSuccess: () => { client.invalidateQueries({ queryKey: ['proposals', token] }); notify(session ? 'Proposal saved for independent approver review.' : 'Proposal saved. Switch to Human approver to review it.'); }, onError: error => notify(errorMessage(error), true) });
   const approve = useMutation({ mutationFn: (id: string) => api<Proposal>(`/proposals/${id}/approve`, token, {}),
     onSuccess: () => { client.invalidateQueries({ queryKey: ['proposals', token] }); notify('Human review recorded. No network change has been executed.'); }, onError: error => notify(errorMessage(error), true) });
   const busy = investigation.isPending || propose.isPending || approve.isPending;
@@ -98,22 +99,22 @@ export default function App() {
     <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
       <a className="brand" href="#" onClick={e => { e.preventDefault(); navigate('overview'); }}><span className="brand-mark"><i /><i /><i /></span><span>signal<span className="brand-period">.</span></span></a>
       <div className="workspace-label">NETWORK INTELLIGENCE</div>
-      <div className="workspace-card"><div className="workspace-icon"><Network size={18} /></div><div><strong>Operations workspace</strong><span>Demo environment</span></div><ChevronDown size={13} /></div>
+      <div className="workspace-card"><div className="workspace-icon"><Network size={18} /></div><div><strong>Operations workspace</strong><span>{session ? "Protected sample workspace" : "Demo environment"}</span></div><ChevronDown size={13} /></div>
       <div className="nav-label">WORKSPACE</div>
       <nav aria-label="Main navigation">{navigation.map(item => <button key={item.id} className={`nav-item ${page === item.id ? 'active' : ''}`} onClick={() => navigate(item.id)}><item.icon size={18} strokeWidth={1.7} /><span>{item.label}</span>{item.count && <span className="nav-count">{overview.data?.metrics.active_alarms ?? item.count}</span>}{page === item.id && <span className="nav-active-dot" />}</button>)}</nav>
       <div className="sidebar-bottom"><div className="safe-workspace"><ShieldCheck size={18} /><div><strong>Built on trusted evidence</strong><p>Customer-scoped data.<br />Human-reviewed actions.</p></div></div>
-        <a className="sidebar-link" href="http://127.0.0.1:8000/docs" target="_blank" rel="noreferrer"><BookOpen size={16} />API documentation<ExternalLink size={12} /></a>
-        <div className="sidebar-profile"><span className="profile-avatar">DO</span><div><strong>Demo operator</strong><span>Local development</span></div><CircleHelp size={16} /></div>
+        {!session && <a className="sidebar-link" href="http://127.0.0.1:8000/docs" target="_blank" rel="noreferrer"><BookOpen size={16} />API documentation<ExternalLink size={12} /></a>}
+        <div className="sidebar-profile"><span className="profile-avatar">DO</span><div><strong>{session ? roleLabels[role] : "Demo operator"}</strong><span>{session ? "Authenticated session" : "Local development"}</span></div>{session ? <button className="text-button" disabled={busy} onClick={onSignOut}>Sign out</button> : <CircleHelp size={16} />}</div>
       </div>
     </aside>
     <div className="main-shell">
       <header className="topbar"><div className="breadcrumb"><button className="mobile-menu icon-button" aria-label="Open navigation" onClick={() => setSidebarOpen(true)}><Menu size={19} /></button><span>Workspace</span><ChevronRight size={13} /><strong>{navigation.find(n => n.id === page)?.label}</strong></div>
         <div className="topbar-right"><div className="search-box"><Search size={15} /><input aria-label="Search network entities" placeholder="Search entities…" value={search} onChange={e => setSearch(e.target.value)} /><kbd>/</kbd>{search && <div className="search-results">{topology.data?.entities.filter(e => `${e.id} ${e.name}`.toLowerCase().includes(search.toLowerCase())).slice(0, 7).map(e => <button key={e.id} onClick={() => openEntity(e.id)}><Network size={14} /><div><strong>{e.id}</strong><span>{e.name}</span></div><ChevronRight size={13} /></button>)}{!topology.data?.entities.some(e => `${e.id} ${e.name}`.toLowerCase().includes(search.toLowerCase())) && <p>No matching entities in this customer.</p>}</div>}</div>
-          <span className="header-divider" /><label className="select-wrap customer-select"><span className="customer-avatar">{customer.slice(0, 1).toUpperCase()}</span><select aria-label="Customer" value={customer} disabled={busy} onChange={e => { setCustomer(e.target.value); setSearch(''); setNotice(null); }}>{customers.map(c => <option value={c.id} key={c.id}>{c.name}</option>)}</select><ChevronDown size={13} /></label></div>
+          <span className="header-divider" /><label className="select-wrap customer-select"><span className="customer-avatar">{customer.slice(0, 1).toUpperCase()}</span><select aria-label="Customer" value={customer} disabled={busy || !!session} onChange={e => { setCustomer(e.target.value); setSearch(''); setNotice(null); }}>{customers.map(c => <option value={c.id} key={c.id}>{c.name}</option>)}</select><ChevronDown size={13} /></label></div>
       </header>
       <main>
         <div className="page-heading"><div><div className="title-eyebrow"><span className="tiny-dot" />OPERATIONS / {overview.data?.customer.region.toUpperCase() || 'MUMBAI'} REGION</div><h1>{pageTitles[page].title}</h1><p>{pageTitles[page].subtitle}</p></div><div className="heading-actions"><Badge tone="green"><span className="badge-dot" />Sample data</Badge><Button variant="outline" onClick={downloadReport} disabled={!overview.data}><Download size={14} />Export snapshot</Button></div></div>
-        <div className="context-bar"><div><Clock3 size={14} /><span>10 Nov 2026</span><span className="context-dot">·</span><label className="select-wrap snapshot-select"><select aria-label="Topology snapshot" value={historical ? 'before' : 'during'} onChange={e => setHistorical(e.target.value === 'before')}><option value="during">10:05 UTC · Incident snapshot</option><option value="before">09:45 UTC · Before incident</option></select><ChevronDown size={12} /></label></div><label className="select-wrap role-select"><ShieldCheck size={14} /><span>Viewing as</span><select aria-label="Agent role" value={role} disabled={busy} onChange={e => setRole(e.target.value)}>{Object.entries(roleLabels).map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select><ChevronDown size={12} /></label></div>
+        <div className="context-bar"><div><Clock3 size={14} /><span>10 Nov 2026</span><span className="context-dot">·</span><label className="select-wrap snapshot-select"><select aria-label="Topology snapshot" value={historical ? 'before' : 'during'} onChange={e => setHistorical(e.target.value === 'before')}><option value="during">10:05 UTC · Incident snapshot</option><option value="before">09:45 UTC · Before incident</option></select><ChevronDown size={12} /></label></div><label className="select-wrap role-select"><ShieldCheck size={14} /><span>Viewing as</span><select aria-label="Agent role" value={role} disabled={busy || !!session} onChange={e => setRole(e.target.value)}>{Object.entries(roleLabels).map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select><ChevronDown size={12} /></label></div>
         {(overview.isError || topology.isError || kpis.isError || neighbors.isError || history.isError) && <div className="error-banner" role="alert"><TriangleAlert size={18} /><p>{errorMessage(overview.error || topology.error || kpis.error || neighbors.error || history.error)}</p><Button variant="outline" size="sm" onClick={() => client.invalidateQueries()}>Retry</Button></div>}
         {overview.isLoading && <div className="page-loading"><LoaderCircle className="spin" />Loading your network…</div>}
         {overview.data && <>

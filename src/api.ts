@@ -1,7 +1,9 @@
 import axios from 'axios';
 
+const apiBaseURL = (import.meta.env.VITE_API_BASE_URL || '/api/v1').replace(/\/+$/, '');
+export const authenticationConfigURL = apiBaseURL.replace(/\/v1$/, '/config');
 const client = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || '/api/v1',
+  baseURL: apiBaseURL,
   timeout: Number(import.meta.env.VITE_API_TIMEOUT_MS) || 65000,
 });
 export async function api<T>(path: string, token: string, body?: unknown): Promise<T> {
