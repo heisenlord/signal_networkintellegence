@@ -1,10 +1,14 @@
 """Production trust boundaries: real signatures, rejection paths and HTTP limits."""
 import os
+import socket
 import subprocess
 import sys
+import time
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from types import SimpleNamespace
 
+import httpx
 import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -218,3 +222,42 @@ with TestClient(app) as client:
 '''
     result = subprocess.run([sys.executable, "-c", script], env=env, capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, result.stderr
+
+
+def test_render_start_command_serves_the_assigned_port(tmp_path):
+    with socket.socket() as socket_probe:
+        socket_probe.bind(("127.0.0.1", 0))
+        port = socket_probe.getsockname()[1]
+    env = {**os.environ, "PORT": str(port), "SIGNAL_ENVIRONMENT": "production",
+        "SIGNAL_ALLOWED_HOSTS": '["127.0.0.1", "localhost"]', "SIGNAL_STATIC_DIR": "",
+        "SIGNAL_OIDC_ISSUER": "https://identity.example.com/", "SIGNAL_OIDC_AUDIENCE": "signal-api",
+        "SIGNAL_OIDC_JWKS_URL": "https://identity.example.com/jwks", "SIGNAL_AGENT_MODE": "deterministic",
+        "SIGNAL_DATABASE_URL": f"sqlite:///{tmp_path}/render.db"}
+    # The Render script uses `python` from PATH, just as the native runtime does.
+    env["PATH"] = str(Path(sys.executable).parent) + os.pathsep + env.get("PATH", "")
+    root = Path(__file__).resolve().parents[2]
+    process = subprocess.Popen(["bash", "scripts/start-render.sh"], cwd=root, env=env,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    try:
+        deadline = time.monotonic() + 20
+        with httpx.Client(base_url=f"http://127.0.0.1:{port}", trust_env=False, timeout=1) as client:
+            while time.monotonic() < deadline:
+                if process.poll() is not None:
+                    pytest.fail(process.stdout.read())
+                try:
+                    if client.get("/api/health").status_code == 200:
+                        break
+                except httpx.TransportError:
+                    pass
+                time.sleep(.1)
+            else:
+                pytest.fail("Render start command did not become healthy")
+            assert client.get("/api/config").json() == {"authentication": "oidc"}
+            assert client.get("/api/v1/overview", headers={"Authorization": "Bearer demo-atlas-alarm"}).status_code == 401
+    finally:
+        process.terminate()
+        try:
+            process.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.communicate()
