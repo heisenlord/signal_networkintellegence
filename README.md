@@ -22,7 +22,7 @@ cp .env.example .env
 npm run dev
 ```
 
-The local Vite server proxies `/api` to `http://127.0.0.1:8000`; run the backend separately. For production custom API domains, also update the `connect-src` policy in `vercel.json`.
+The local Vite server proxies `/api` to `http://127.0.0.1:8000` by default; run the backend separately. To use Render locally, set `VITE_API_BASE_URL=https://signal-networkintellegence.onrender.com` (with or without `/api/v1`) in `.env`. Vite proxies the local API requests to that backend, avoiding localhost CORS issues. Production builds use the normalized HTTPS API URL directly. For production custom API domains, also update the `connect-src` policy in `vercel.json`.
 
 ## Validation
 
