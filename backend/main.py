@@ -1,14 +1,21 @@
 from contextlib import asynccontextmanager
+from collections import OrderedDict
+from pathlib import Path
+from threading import BoundedSemaphore, Lock
+from time import monotonic
 from typing import Annotated
-from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
+from starlette.middleware.cors import CORSMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 
-from backend.auth import CUSTOMERS, IDENTITIES, PERMISSIONS, ROLES, Principal, principal
-from backend.config import agent_status
+from backend.auth import CUSTOMERS, PERMISSIONS, ROLES, Principal, principal
+from backend.config import agent_status, get_settings
+from backend.security import SecurityMiddleware
 from backend.database import Alarm, Audit, Counter, Customer, Entity, Investigation, Proposal, Relationship, Session
 from backend.scenarios import SCENARIOS
 from backend.seed import OBSERVED_AT, seed
@@ -23,28 +30,30 @@ async def lifespan(app):
     yield
 
 
+settings = get_settings()
+production = settings.signal_environment == "production"
 app = FastAPI(title="Signal Network Intelligence", version="1.0.0", lifespan=lifespan,
-    description="Local sample-data demo. Public demo identities are not production authentication. No network-change executor is installed.")
-
-
-@app.middleware("http")
-async def request_id(request: Request, call_next):
-    request.state.request_id = str(uuid4())
-    response = await call_next(request)
-    response.headers["X-Request-ID"] = request.state.request_id
-    response.headers["Cache-Control"] = "no-store"
-    return response
+    docs_url=None if production else "/docs", redoc_url=None if production else "/redoc",
+    openapi_url=None if production else "/openapi.json",
+    description="Sample-data network intelligence. No network-change executor is installed.")
+app.add_middleware(CORSMiddleware, allow_origins=settings.signal_allowed_origins,
+    allow_credentials=False, allow_methods=["GET", "POST"], allow_headers=["Authorization", "Content-Type"],
+    expose_headers=["X-Request-ID", "Retry-After", "WWW-Authenticate"], max_age=600)
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.signal_allowed_hosts)
+app.add_middleware(SecurityMiddleware, settings=settings)
+investigation_slots = BoundedSemaphore(settings.signal_max_concurrent_investigations)
+investigation_rates = OrderedDict()
+investigation_rate_lock = Lock()
 
 
 @app.exception_handler(HTTPException)
 async def error_response(request: Request, exc: HTTPException):
     # Persist denied authenticated requests as well as successful tools.
-    token = request.headers.get("authorization", "").removeprefix("Bearer ")
-    identity = IDENTITIES.get(token)
+    identity = getattr(request.state, "identity", None)
     if identity:
         with Session.begin() as session:
             Tools(session, identity, request.state.request_id).audit("request_denied", {"path": request.url.path, "status": exc.status_code, "reason": str(exc.detail)})
-    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail, "request_id": request.state.request_id,
+    return JSONResponse(status_code=exc.status_code, headers=exc.headers, content={"detail": exc.detail, "request_id": request.state.request_id,
         "errors": [{"code": str(exc.status_code), "message": str(exc.detail)}]})
 
 
@@ -89,7 +98,20 @@ class ActionRequest(StrictModel):
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "mode": "sample-data", "llm_required": False, "agent": agent_status()}
+    from sqlalchemy import text
+    with Session() as session:
+        session.execute(text("SELECT 1"))
+    return {"status": "ok", "mode": "sample-data"}
+
+
+@app.get("/api/config")
+def public_config():
+    return {"authentication": "oidc" if production else "demo"}
+
+
+@app.get("/api/v1/session")
+def current_session(identity: Principal = Depends(principal)):
+    return {"customer_id": identity.customer_id, "role": identity.role, "subject": identity.subject}
 
 
 @app.get("/api/v1/agent/status")
@@ -100,6 +122,8 @@ def agent_configuration(tools: Context):
 
 @app.get("/api/v1/demo/sessions")
 def sessions():
+    if production:
+        raise HTTPException(404, "Not found")
     return {"notice": "Public localhost-only demo identities, not production authentication.",
         "customers": [{"id": cid, "name": name, "region": region} for cid, name, region in CUSTOMERS],
         "roles": [{"id": rid, "name": name, "permissions": sorted(PERMISSIONS[rid])} for rid, name in ROLES.items()]}
@@ -165,7 +189,26 @@ def alarms(incident_id: str, tools: Context):
 
 @app.post("/api/v1/investigations")
 def run_investigation(body: InvestigationRequest, tools: Context):
-    return investigate(tools, body.incident_id, body.question)
+    tools.require("investigate")
+    if production:
+        # Subject and tenant come from a verified token, not caller-supplied input.
+        key = (tools.customer, tools.identity.subject)
+        with investigation_rate_lock:
+            now = monotonic()
+            started, count = investigation_rates.pop(key, (now, 0))
+            if now - started >= 60:
+                started, count = now, 0
+            investigation_rates[key] = (started, count + 1)
+            if len(investigation_rates) > 10000:
+                investigation_rates.popitem(last=False)
+        if count >= settings.signal_investigations_per_minute:
+            raise HTTPException(429, "Investigation request limit exceeded", headers={"Retry-After": str(max(1, int(60 - now + started)))})
+    if not investigation_slots.acquire(blocking=False):
+        raise HTTPException(429, "Investigation capacity reached; retry shortly", headers={"Retry-After": "5"})
+    try:
+        return investigate(tools, body.incident_id, body.question)
+    finally:
+        investigation_slots.release()
 
 
 @app.get("/api/v1/investigations")
@@ -209,3 +252,11 @@ def audit(tools: Context, limit: int = Query(default=50, ge=1, le=200)):
     rows = tools.session.scalars(select(Audit).where(Audit.customer_id == tools.customer).order_by(Audit.id.desc()).limit(limit))
     return {"customer_id": tools.customer, "items": [{"id": r.id, "actor": r.actor, "role": r.role, "operation": r.operation,
         "timestamp": r.timestamp, "details": r.details} for r in rows]}
+
+
+# Register last so unknown API routes cannot resolve to the frontend.
+if settings.signal_static_dir:
+    static_dir = Path(settings.signal_static_dir)
+    if not (static_dir / "index.html").is_file():
+        raise RuntimeError("SIGNAL_STATIC_DIR must contain the built frontend")
+    app.mount("/", StaticFiles(directory=static_dir, html=True), name="frontend")

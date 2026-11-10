@@ -1,0 +1,17 @@
+name: Validate Render backend
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install --upgrade pip==26.3
+      - run: pip install --require-hashes -r backend/requirements.lock
+      - run: pip install -r backend/requirements-dev.txt
+      - run: python -m pytest -q
+      - run: pip-audit -r backend/requirements.lock
+      - run: bash -n scripts/start-render.sh
